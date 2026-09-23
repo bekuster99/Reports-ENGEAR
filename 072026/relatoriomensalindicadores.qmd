@@ -1,0 +1,191 @@
+---
+title: "Painel de Indicadores Financeiros"
+subtitle: "Análise Consolidada de Margens e Resultados"
+jupyter: python3
+format:
+  html:
+    page-layout: full
+    theme: cosmo
+    toc: false
+    css: styles.css
+    embed-resources: true
+---
+
+```{python}
+#| echo: false
+#| warning: false
+#| message: false
+
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from IPython.display import display, HTML
+
+# -------------------------------------------------------------------------
+# 1. PARÂMETROS E CARREGAMENTO
+# -------------------------------------------------------------------------
+ANO_ANALISE = 2026
+MES_ANALISE = 7
+
+data_corte = pd.Timestamp(year=ANO_ANALISE, month=MES_ANALISE, day=1)
+inicio_13m = data_corte - pd.DateOffset(months=12)
+
+df = pd.read_excel("drgcc.xlsx")
+df["Competência"] = pd.to_datetime(df["Competência"])
+df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
+df["Mes_Competencia"] = df["Competência"].dt.to_period("M").dt.to_timestamp()
+
+# Limpeza e Padronização da coluna da Categoria (Garante apenas a letra maiúscula)
+df["Cat_Letra"] = df["Categoria DRG CP"].astype(str).str.strip().str[0].str.upper()
+
+# Funções de Formatação
+def fmt_r0(v):
+    return f"R$ {v:,.0f}".replace(",", ".")
+
+def fmt_pct(v):
+    if pd.isna(v) or v == 0:
+        return "0,0%"
+    sinal = "+" if v >= 0 else ""
+    return f"{sinal}{v:,.1f}%".replace(".", ",")
+
+# -------------------------------------------------------------------------
+# 2. CONSTRUÇÃO DA MATRIZ MENSAL DAS CATEGORIAS
+# -------------------------------------------------------------------------
+# Pivot table: Mes_Competencia x Cat_Letra (Valores em absoluto para cálculo de margem)
+df_cat_mes = (
+    df.groupby(["Mes_Competencia", "Cat_Letra"])["Valor"]
+    .sum()
+    .abs()
+    .unstack(fill_value=0)
+)
+
+# Garantir presença de todas as colunas necessárias no DataFrame
+for col in ["A", "B", "C", "D", "E", "F", "O"]:
+    if col not in df_cat_mes.columns:
+        df_cat_mes[col] = 0.0
+
+# Cálculo dos Indicadores Estruturados por Mês
+df_ind = pd.DataFrame(index=df_cat_mes.index)
+
+df_ind["Receita Liquida"] = df_cat_mes["A"] - df_cat_mes["B"]
+df_ind["Margem de Contribuição"] = df_cat_mes["A"] - df_cat_mes["B"] - df_cat_mes["C"]
+df_ind["EBITDA"] = df_cat_mes["A"] - df_cat_mes["B"] - df_cat_mes["C"] - df_cat_mes["D"]
+df_ind["EBITD"] = df_cat_mes["A"] - df_cat_mes["B"] - df_cat_mes["C"] - df_cat_mes["D"] - df_cat_mes["E"]
+df_ind["Lucro Liquido"] = (
+    df_cat_mes["A"] - df_cat_mes["B"] - df_cat_mes["C"] - 
+    df_cat_mes["D"] - df_cat_mes["E"] - df_cat_mes["F"] - df_cat_mes["O"]
+)
+
+# Receita Bruta (A) usada como denominador para Análise Vertical
+rec_bruta_mensal = df_cat_mes["A"]
+
+# -------------------------------------------------------------------------
+# 3. GENERATION LOOP: GRÁFICOS COMBINADOS + CARDS DE KPIS
+# -------------------------------------------------------------------------
+indicadores_config = [
+    ("Receita Líquida", "Receita Liquida", "#1E3A8A"),
+    ("Margem de Contribuição", "Margem de Contribuição", "#047857"),
+    ("EBITDA", "EBITDA", "#0284C7"),
+    ("EBITD", "EBITD", "#7C3AED"),
+    ("Lucro Líquido", "Lucro Liquido", "#B91C1C")
+]
+
+for titulo_exibicao, col_df, cor_base in indicadores_config:
+    
+    # Bloco A: Filtragem 13 Meses para o Gráfico Misto
+    df_chart = df_ind[(df_ind.index >= inicio_13m) & (df_ind.index <= data_corte)].copy()
+    rec_chart = rec_bruta_mensal[(rec_bruta_mensal.index >= inicio_13m) & (rec_bruta_mensal.index <= data_corte)]
+    
+    labels_13m = df_chart.index.strftime("%b/%Y")
+    valores_13m = df_chart[col_df]
+    av_13m = (valores_13m / rec_chart * 100).fillna(0)
+    
+    # Montagem do Gráfico com 2 Eixos Y (Eixo 1: R$ Colunas | Eixo 2: % Linha)
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    # Colunas: Valor Monetário
+    fig.add_trace(
+        go.Bar(
+            x=labels_13m,
+            y=valores_13m,
+            name="Valor (R$)",
+            text=[fmt_r0(v) for v in valores_13m],
+            textposition="outside",
+            textfont=dict(family="Segoe UI, Arial", size=10, color="#1E293B"),
+            marker_color=cor_base,
+            hovertemplate="<b>%{x}</b><br>Valor: R$ %{y:,.2f}<extra></extra>"
+        ),
+        secondary_y=False
+    )
+
+    # Linha: Análise Vertical (% Receita)
+    fig.add_trace(
+        go.Scatter(
+            x=labels_13m,
+            y=av_13m,
+            name="AV (% Rec.)",
+            mode="lines+markers+text",
+            text=[f"{v:.1f}%" for v in av_13m],
+            textposition="top center",
+            textfont=dict(family="Segoe UI, Arial", size=10, color="#D97706"),
+            line=dict(color="#D97706", width=2.5),
+            marker=dict(size=6, color="#B45309"),
+            hovertemplate="<b>Análise Vertical</b><br>%{x}: %{y:.2f}%<extra></extra>"
+        ),
+        secondary_y=True
+    )
+
+    fig.update_layout(
+        title=dict(text=f"<b>{titulo_exibicao}</b> · Evolução Mensal e AV %", font=dict(size=16, color="#0F172A")),
+        template="plotly_white",
+        showlegend=False,
+        font=dict(family="Segoe UI, Arial", size=11, color="#1E293B"),
+        margin=dict(t=50, b=20),
+        height=380,
+        plot_bgcolor="white"
+    )
+
+    fig.update_yaxes(title_text="Valor (R$)", secondary_y=False, showgrid=True, gridcolor="#F1F5F9")
+    fig.update_yaxes(title_text="Análise Vertical (%)", secondary_y=True, showgrid=False)
+
+    # Bloco B: Cálculos Anuais para os Cards
+    val_ano_atual = df_ind[df_ind.index.year == ANO_ANALISE][col_df].sum()
+    rec_ano_atual = rec_bruta_mensal[rec_bruta_mensal.index.year == ANO_ANALISE].sum()
+    pct_ano_atual = (val_ano_atual / rec_ano_atual * 100) if rec_ano_atual > 0 else 0
+
+    val_ano_ant = df_ind[df_ind.index.year == (ANO_ANALISE - 1)][col_df].sum()
+    rec_ano_ant = rec_bruta_mensal[rec_bruta_mensal.index.year == (ANO_ANALISE - 1)].sum()
+    pct_ano_ant = (val_ano_ant / rec_ano_ant * 100) if rec_ano_ant > 0 else 0
+
+    media_ano_atual = df_ind[df_ind.index.year == ANO_ANALISE][col_df].mean()
+
+    # Bloco C: Renderização em Tela
+    display(HTML(f'<div style="margin-top: 40px; border-top: 2px solid #E2E8F0; padding-top: 20px;"></div>'))
+    fig.show()
+
+    cards_html = f"""
+    <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 15px; margin-top: 10px; margin-bottom: 40px;">
+      <div style="background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #E2E8F0;">
+        <div style="font-size: 11px; color: #64748B; font-weight: 600;">Valor no Ano ({ANO_ANALISE})</div>
+        <div style="font-size: 18px; font-weight: bold; color: #0F172A; margin-top: 4px;">{fmt_r0(val_ano_atual)}</div>
+      </div>
+      <div style="background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #E2E8F0;">
+        <div style="font-size: 11px; color: #64748B; font-weight: 600;">% no Ano (AV Rec.)</div>
+        <div style="font-size: 18px; font-weight: bold; color: #0F172A; margin-top: 4px;">{pct_ano_atual:.1f}%</div>
+      </div>
+      <div style="background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #E2E8F0;">
+        <div style="font-size: 11px; color: #64748B; font-weight: 600;">Valor Ano Anterior ({ANO_ANALISE - 1})</div>
+        <div style="font-size: 18px; font-weight: bold; color: #0F172A; margin-top: 4px;">{fmt_r0(val_ano_ant)}</div>
+      </div>
+      <div style="background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #E2E8F0;">
+        <div style="font-size: 11px; color: #64748B; font-weight: 600;">% Anterior (AV Rec.)</div>
+        <div style="font-size: 18px; font-weight: bold; color: #0F172A; margin-top: 4px;">{pct_ano_ant:.1f}%</div>
+      </div>
+      <div style="background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #E2E8F0;">
+        <div style="font-size: 11px; color: #64748B; font-weight: 600;">Média Mensal ({ANO_ANALISE})</div>
+        <div style="font-size: 18px; font-weight: bold; color: #0F172A; margin-top: 4px;">{fmt_r0(media_ano_atual)}</div>
+      </div>
+    </div>
+    """
+    display(HTML(cards_html))
+```
