@@ -1,0 +1,351 @@
+---
+title: "Relatório Mensal de Receita"
+subtitle: "Análise Consolidada - Julho de 2026"
+format:
+  html:
+    page-layout: full
+    theme: cosmo
+    toc: false
+    css: styles.css
+    embed-resources: true
+---
+
+```{python}
+#| echo: false
+#| warning: false
+#| message: false
+
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from IPython.display import display, HTML
+
+#| echo: false
+#| warning: false
+#| message: false
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from IPython.display import HTML, display
+
+# 1. PARÂMETROS E CARREGAMENTO
+ANO_ANALISE = 2026
+MES_ANALISE = 8
+
+df = pd.read_excel("drgcc.xlsx")
+df["Competência"] = pd.to_datetime(df["Competência"])
+df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
+
+# Isolamento de Receitas e Normalização das Datas
+df_receita = df[df["Classificação Competencia"] == "A - Receitas"].copy()
+df_receita["Mes_Competencia"] = (
+    df_receita["Competência"].dt.to_period("M").dt.to_timestamp()
+)
+
+data_corte = pd.Timestamp(year=ANO_ANALISE, month=MES_ANALISE, day=1)
+data_mes_anterior = data_corte - pd.DateOffset(months=1)
+data_ano_anterior = data_corte - pd.DateOffset(years=1)
+
+
+# 2. FUNÇÕES DE FORMATAÇÃO E SUPORTE
+def fmt_r0(v):
+  if pd.isna(v) or v == 0:
+    return "R$ 0"
+  return f"R$ {v:,.0f}".replace(",", ".")
+
+
+def fmt_pct(v):
+  if pd.isna(v) or v == 0:
+    return "0,0%"
+  sinal = "+" if v >= 0 else ""
+  return f"{sinal}{v:,.1f}%".replace(".", ",")
+
+
+def classe_card(v):
+  return "positivo" if v >= 0 else "negativo"
+
+
+# 3. MÉTRICAS EXECUTIVAS GLOBAIS
+rec_mes_atual = df_receita[df_receita["Mes_Competencia"] == data_corte][
+    "Valor"
+].sum()
+rec_mes_anterior = df_receita[
+    df_receita["Mes_Competencia"] == data_mes_anterior
+]["Valor"].sum()
+rec_ano_anterior = df_receita[
+    df_receita["Mes_Competencia"] == data_ano_anterior
+]["Valor"].sum()
+
+df_ano_ate_corte = df_receita[
+    (df_receita["Competência"].dt.year == ANO_ANALISE)
+    & (df_receita["Mes_Competencia"] <= data_corte)
+]
+media_ano_atual = (
+    df_ano_ate_corte.groupby("Mes_Competencia")["Valor"].sum().mean()
+)
+
+var_mom = (
+    ((rec_mes_atual - rec_mes_anterior) / rec_mes_anterior * 100)
+    if rec_mes_anterior != 0
+    else 0
+)
+var_yoy = (
+    ((rec_mes_atual - rec_ano_anterior) / rec_ano_anterior * 100)
+    if rec_ano_anterior != 0
+    else 0
+)
+
+# Renderização do Dashboard KPI
+kpi_html = f"""
+<div class="kpi-grid">
+  <div class="kpi-card">
+    <div class="kpi-label">Receita Total · {MES_ANALISE:02d}/{ANO_ANALISE}</div>
+    <div class="kpi-value">{fmt_r0(rec_mes_atual)}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Média Mensal · {ANO_ANALISE}</div>
+    <div class="kpi-value">{fmt_r0(media_ano_atual)}</div>
+  </div>
+  <div class="kpi-card {classe_card(var_mom)}">
+    <div class="kpi-label">Evolução Mês Anterior</div>
+    <div class="kpi-value">{fmt_pct(var_mom)}</div>
+  </div>
+  <div class="kpi-card {classe_card(var_yoy)}">
+    <div class="kpi-label">Evolução Ano Anterior</div>
+    <div class="kpi-value">{fmt_pct(var_yoy)}</div>
+  </div>
+</div>
+"""
+display(HTML(kpi_html))
+
+# 4. GRÁFICO 1: EVOLUÇÃO HISTÓRICA DA RECEITA TOTAL (EMPILHADO POR MÁSCARA)
+display(
+    HTML(
+        '<h3 class="mascara-titulo" style="margin-top:'
+        ' 40px;">Evolução Histórica da Receita</h3>'
+    )
+)
+
+df_historico = df_receita[df_receita["Mes_Competencia"] <= data_corte].copy()
+
+df_agrupado = (
+    df_historico.groupby(["Mes_Competencia", "Máscara"])["Valor"]
+    .sum()
+    .reset_index()
+)
+
+# Filtra os últimos 6 meses para exibição no gráfico
+ultimos_meses = df_agrupado["Mes_Competencia"].drop_duplicates().tail(6)
+df_agrupado = df_agrupado[
+    df_agrupado["Mes_Competencia"].isin(ultimos_meses)
+].copy()
+
+df_pivot = df_agrupado.pivot(
+    index="Mes_Competencia", columns="Máscara", values="Valor"
+).fillna(0)
+labels_mes = df_pivot.index.strftime("%b/%Y")
+
+paleta_cores = [
+    "#1B2A4A",
+    "#2C4470",
+    "#3D5C96",
+    "#5978B4",
+    "#7B97C9",
+    "#A0B4DC",
+    "#C5D3ED",
+]
+
+fig_receita = go.Figure()
+
+for i, mascara in enumerate(df_pivot.columns):
+  valores = df_pivot[mascara]
+  cor = paleta_cores[i % len(paleta_cores)]
+  textos = [fmt_r0(v) if v > 0 else "" for v in valores]
+
+  fig_receita.add_trace(
+      go.Bar(
+          name=mascara,
+          x=labels_mes,
+          y=valores,
+          text=textos,
+          textposition="inside",
+          insidetextanchor="middle",
+          textfont=dict(color="white", size=11),
+          marker_color=cor,
+          marker_line_width=0,
+          hovertemplate=(
+              f"<b>{mascara}</b><br>%{{x}}: R$ %{{y:,.2f}}<extra></extra>"
+          ),
+      )
+  )
+
+totais_mensais = df_pivot.sum(axis=1)
+
+fig_receita.update_layout(
+    barmode="stack",
+    yaxis_title="Receita Total (R$)",
+    xaxis_title=None,
+    showlegend=True,
+    legend=dict(
+        orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+    ),
+    template="plotly_white",
+    font=dict(family="Segoe UI, Arial", size=13, color="#1E293B"),
+    margin=dict(t=60, b=20),
+    plot_bgcolor="white",
+    height=450,
+)
+
+for x_val, y_val in zip(labels_mes, totais_mensais):
+  if y_val > 0:
+    fig_receita.add_annotation(
+        x=x_val,
+        y=y_val,
+        text=f"<b>{fmt_r0(y_val)}</b>",
+        showarrow=False,
+        yshift=12,
+        font=dict(family="Segoe UI, Arial", size=11, color="#1E293B"),
+    )
+
+fig_receita.show()
+
+# 5. MAPEAMENTO E GRÁFICOS DOS PILARES (OBRAS E MANUTENÇÃO)
+display(
+    HTML(
+        '<h2 style="margin-top: 50px; border-bottom: 2px solid #E2E8F0;'
+        ' padding-bottom: 8px;">Receita por Serviço</h2>'
+    )
+)
+
+condicoes = [
+    df_receita["Tipo Serviço"]
+    .astype(str)
+    .str.upper()
+    .str.contains("MANUT", na=False),
+    df_receita["Tipo Serviço"]
+    .astype(str)
+    .str.upper()
+    .str.contains("OBRA|FABRIC|PROJETO", na=False),
+]
+escolhas = ["Manutenção", "Obras"]
+df_receita["Tipo_Servico_Agrupado"] = np.select(
+    condicoes, escolhas, default="Outros"
+)
+
+config_graficos = [
+    ("Obras", "#1B2A4A", "Evolução da Receita · Obras (Últimos 12 Meses)"),
+    (
+        "Manutenção",
+        "#C0392B",
+        "Evolução da Receita · Manutenção (Últimos 12 Meses)",
+    ),
+]
+
+for pilar, cor_barra, titulo in config_graficos:
+  display(
+      HTML(f'<h3 class="mascara-titulo" style="margin-top: 40px;">{titulo}</h3>')
+  )
+
+  df_pilar = df_receita[df_receita["Tipo_Servico_Agrupado"] == pilar].copy()
+
+  if df_pilar.empty:
+    display(
+        HTML(
+            '<p class="sem-dados">Nenhum lançamento registrado para este'
+            ' segmento no período.</p>'
+        )
+    )
+    continue
+
+  df_historico_pilar = df_pilar[
+      df_pilar["Mes_Competencia"] <= data_corte
+  ].copy()
+  df_mensal_pilar = (
+      df_historico_pilar.groupby("Mes_Competencia", as_index=False)["Valor"]
+      .sum()
+      .sort_values("Mes_Competencia")
+  )
+  df_mensal_pilar = df_mensal_pilar.tail(12).copy()
+
+  labels_mes = df_mensal_pilar["Mes_Competencia"].dt.strftime("%b/%Y")
+  valores = df_mensal_pilar["Valor"]
+  textos = [fmt_r0(v) if v > 0 else "" for v in valores]
+
+  fig = go.Figure()
+  fig.add_trace(
+      go.Bar(
+          x=labels_mes,
+          y=valores,
+          text=textos,
+          textposition="inside",
+          insidetextanchor="middle",
+          textfont=dict(color="white", size=11),
+          marker_color=cor_barra,
+          hovertemplate=f"<b>{pilar}</b><br>%{{x}}: R$ %{{y:,.2f}}<extra></extra>",
+      )
+  )
+
+  fig.update_layout(
+      yaxis_title="Receita (R$)",
+      xaxis_title=None,
+      showlegend=False,
+      template="plotly_white",
+      font=dict(family="Segoe UI, Arial", size=12, color="#1E293B"),
+      margin=dict(t=30, b=20),
+      plot_bgcolor="white",
+      height=360,
+  )
+  fig.show()
+
+  rec_atual_pilar = df_pilar[df_pilar["Mes_Competencia"] == data_corte][
+      "Valor"
+  ].sum()
+  rec_anterior_pilar = df_pilar[
+      df_pilar["Mes_Competencia"] == data_mes_anterior
+  ]["Valor"].sum()
+  rec_ano_ant_pilar = df_pilar[
+      df_pilar["Mes_Competencia"] == data_ano_anterior
+  ]["Valor"].sum()
+
+  df_pilar_ano = df_pilar[
+      (df_pilar["Competência"].dt.year == ANO_ANALISE)
+      & (df_pilar["Mes_Competencia"] <= data_corte)
+  ]
+  media_ano_pilar = (
+      df_pilar_ano.groupby("Mes_Competencia")["Valor"].sum().mean()
+  )
+
+  var_mom_pilar = (
+      ((rec_atual_pilar - rec_anterior_pilar) / rec_anterior_pilar * 100)
+      if rec_anterior_pilar != 0
+      else 0
+  )
+  var_yoy_pilar = (
+      ((rec_atual_pilar - rec_ano_ant_pilar) / rec_ano_ant_pilar * 100)
+      if rec_ano_ant_pilar != 0
+      else 0
+  )
+
+  kpi_pilar_html = f"""
+    <div class="kpi-grid" style="margin-bottom: 30px;">
+      <div class="kpi-card">
+        <div class="kpi-label">Receita {pilar} · {MES_ANALISE:02d}/{ANO_ANALISE}</div>
+        <div class="kpi-value">{fmt_r0(rec_atual_pilar)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Média Mensal · {ANO_ANALISE}</div>
+        <div class="kpi-value">{fmt_r0(media_ano_pilar if pd.notna(media_ano_pilar) else 0)}</div>
+      </div>
+      <div class="kpi-card {classe_card(var_mom_pilar)}">
+        <div class="kpi-label">Evolução Mês Anterior</div>
+        <div class="kpi-value">{fmt_pct(var_mom_pilar)}</div>
+      </div>
+      <div class="kpi-card {classe_card(var_yoy_pilar)}">
+        <div class="kpi-label">Evolução Ano Anterior</div>
+        <div class="kpi-value">{fmt_pct(var_yoy_pilar)}</div>
+      </div>
+    </div>
+    """
+  display(HTML(kpi_pilar_html))
+```

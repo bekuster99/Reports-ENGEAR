@@ -1,0 +1,206 @@
+---
+title: "Relatório Mensal de Impostos"
+subtitle: "Análise Consolidada - Julho de 2026"
+format:
+  html:
+    page-layout: full
+    theme: cosmo
+    toc: false
+    css: styles.css
+    embed-resources: true
+---
+## Evolução dos Impostos (B+O)
+```{python}
+#| echo: false
+#| warning: false
+#| message: false
+#| output: asis
+
+import pandas as pd
+import plotly.graph_objects as go
+from IPython.display import display, HTML
+
+# 1. PARÂMETROS
+ANO_ANALISE = 2026
+MES_ANALISE = 8
+
+# Carregamento da Base
+df = pd.read_excel("drgcc.xlsx")
+df["Competência"] = pd.to_datetime(df["Competência"])
+df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
+
+# Datas de Corte
+data_corte = pd.Timestamp(year=ANO_ANALISE, month=MES_ANALISE, day=1)
+data_ano_anterior = data_corte - pd.DateOffset(years=1)
+
+# Funções de Formatação
+def fmt_r0(v):
+    return f"R$ {v:,.0f}".replace(",", ".")
+
+def fmt_pct(v):
+    if pd.isna(v) or v == 0:
+        return "0,0%"
+    sinal = "+" if v >= 0 else ""
+    return f"{sinal}{v:,.1f}%".replace(".", ",")
+
+def classe_card(valor):
+    return "positivo" if valor >= 0 else "negativo"
+
+# 2. CÁLCULOS E BASE DE DADOS
+df["Mes_Competencia"] = df["Competência"].dt.to_period("M").dt.to_timestamp()
+
+# Receita Total de Julho/2026 (Para a Análise Vertical)
+df_rec_mes = df[
+    (df["Classificação Competencia"] == "A - Receitas") & 
+    (df["Mes_Competencia"] == data_corte)
+]
+rec_mes_atual = df_rec_mes["Valor"].abs().sum()
+
+# Impostos (Classes B e O)
+classes_impostos = ["B - Impostos sobre Receita e Deduções", "O - Impostos sobre Lucro"]
+df_impostos = df[df["Classificação Competencia"].isin(classes_impostos)].copy()
+df_impostos["Valor_Abs"] = df_impostos["Valor"].abs()
+
+# Impostos Mês Atual (Julho/2026)
+imp_mes_atual = df_impostos[df_impostos["Mes_Competencia"] == data_corte]["Valor_Abs"].sum()
+
+# Impostos Mês Ano Anterior (Julho/2025)
+imp_ano_anterior = df_impostos[df_impostos["Mes_Competencia"] == data_ano_anterior]["Valor_Abs"].sum()
+
+# Média Mensal (2026)
+media_ano_imp = (
+    df_impostos[df_impostos["Mes_Competencia"].dt.year == ANO_ANALISE]
+    .groupby("Mes_Competencia")["Valor_Abs"]
+    .sum()
+    .mean()
+)
+
+# Variação YoY e Análise Vertical
+var_yoy_imp = ((imp_mes_atual - imp_ano_anterior) / imp_ano_anterior * 100) if imp_ano_anterior > 0 else 0
+analise_vertical = (imp_mes_atual / rec_mes_atual * 100) if rec_mes_atual > 0 else 0
+
+# 3. GRÁFICO DE BARRAS (ÚLTIMOS 6 MESES)
+df_hist_imp = df_impostos[df_impostos["Mes_Competencia"] <= data_corte].copy()
+
+df_totais_mes = (
+    df_hist_imp.groupby("Mes_Competencia", as_index=False)["Valor_Abs"]
+    .sum()
+    .sort_values("Mes_Competencia")
+    .tail(6)
+)
+
+labels_mes = df_totais_mes["Mes_Competencia"].dt.strftime("%b/%Y")
+valores_totais = df_totais_mes["Valor_Abs"]
+
+fig_imp = go.Figure()
+
+fig_imp.add_trace(go.Bar(
+    x=labels_mes,
+    y=valores_totais,
+    text=[fmt_r0(v) for v in valores_totais],
+    textposition="outside",
+    textfont=dict(family="Segoe UI, Arial", size=11, color="#1E293B"),
+    marker_color="#B03A2E",
+    marker_line_width=0,
+    hovertemplate="<b>Impostos Total</b><br>%{x}: R$ %{y:,.2f}<extra></extra>"
+))
+
+fig_imp.update_layout(
+    yaxis_title="Total de Impostos (R$)",
+    xaxis_title=None,
+    showlegend=False,
+    template="plotly_white",
+    font=dict(family="Segoe UI, Arial", size=12, color="#1E293B"),
+    margin=dict(t=50, b=20),
+    plot_bgcolor="white",
+    height=400
+)
+
+fig_imp.show()
+
+# 4. RENDERIZAÇÃO DOS CARDS DE INDICADORES
+kpi_impostos_html = f"""
+<div class="kpi-grid" style="margin-top: 20px; margin-bottom: 30px;">
+  <div class="kpi-card">
+    <div class="kpi-label">Impostos no Mês · {MES_ANALISE:02d}/{ANO_ANALISE}</div>
+    <div class="kpi-value">{fmt_r0(imp_mes_atual)}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Média Mensal · {ANO_ANALISE}</div>
+    <div class="kpi-value">{fmt_r0(media_ano_imp if pd.notna(media_ano_imp) else 0)}</div>
+  </div>
+  <div class="kpi-card {classe_card(var_yoy_imp)}">
+    <div class="kpi-label">Evolução Ano Anterior</div>
+    <div class="kpi-value">{fmt_pct(var_yoy_imp)}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Análise Vertical (% Receita)</div>
+    <div class="kpi-value">{analise_vertical:.1f}%</div>
+  </div>
+</div>
+"""
+display(HTML(kpi_impostos_html))
+```
+
+```{python}
+#| echo: false
+#| warning: false
+#| message: false
+#| output: asis
+# 6. TABELA CONSOLIDADA DE MÁSCARAS (ACUMULADO DO ANO)
+# -------------------------------------------------------------------------
+display(HTML('<h3 class="mascara-titulo" style="margin-top: 40px;">Detalhamento por Máscara · Acumulado Ano</h3>'))
+
+# Receita Total Acumulada no Ano
+rec_total_ano = df[
+    (df["Classificação Competencia"] == "A - Receitas") & 
+    (df["Mes_Competencia"].dt.year == ANO_ANALISE)
+]["Valor"].abs().sum()
+
+# Agrupamento das Máscaras no Ano
+df_mascaras_ano = (
+    df_impostos[df_impostos["Mes_Competencia"].dt.year == ANO_ANALISE]
+    .groupby("Máscara", as_index=False)["Valor_Abs"]
+    .sum()
+    .sort_values("Valor_Abs", ascending=False)
+)
+
+# Cálculo da Análise Vertical Anual por Máscara
+df_mascaras_ano["AV_Ano"] = (df_mascaras_ano["Valor_Abs"] / rec_total_ano * 100) if rec_total_ano > 0 else 0
+
+# Montagem da Tabela HTML
+linhas_tabela = ""
+total_imp_acum_ano = df_mascaras_ano["Valor_Abs"].sum()
+total_av_acum_ano = (total_imp_acum_ano / rec_total_ano * 100) if rec_total_ano > 0 else 0
+
+for _, row in df_mascaras_ano.iterrows():
+    linhas_tabela += f"""
+    <tr>
+        <td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0;">{row['Máscara']}</td>
+        <td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; text-align: right;">{fmt_r0(row['Valor_Abs'])}</td>
+        <td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; text-align: right;">{row['AV_Ano']:.2f}%</td>
+    </tr>
+    """
+
+tabela_html = f"""
+<table class="df-tabela" style="width: 100%; border-collapse: collapse; margin-top: 15px; font-family: 'Segoe UI', Arial;">
+    <thead>
+        <tr style="background-color: #f8fafc; border-bottom: 2px solid #e2e8f0; text-align: left;">
+            <th style="padding: 10px;">Máscara</th>
+            <th style="padding: 10px; text-align: right;">Total Acumulado ({ANO_ANALISE})</th>
+            <th style="padding: 10px; text-align: right;">Análise Vertical (% Rec. Total)</th>
+        </tr>
+    </thead>
+    <tbody>
+        {linhas_tabela}
+        <tr style="font-weight: bold; background-color: #f1f5f9; border-top: 2px solid #cbd5e1;">
+            <td style="padding: 10px;">TOTAL GERAL DE IMPOSTOS</td>
+            <td style="padding: 10px; text-align: right;">{fmt_r0(total_imp_acum_ano)}</td>
+            <td style="padding: 10px; text-align: right;">{total_av_acum_ano:.2f}%</td>
+        </tr>
+    </tbody>
+</table>
+"""
+
+display(HTML(tabela_html))
+```

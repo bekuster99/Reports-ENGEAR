@@ -1,0 +1,243 @@
+---
+title: "Análise Vertical Integrada"
+subtitle: "DRE Mensal, Acumulado Anual e Segmentações Estratégicas"
+format:
+  html:
+    page-layout: full
+    theme: cosmo
+    toc: false
+    css: styles.css
+    embed-resources: true
+---
+
+```{python}
+#| echo: false
+#| warning: false
+#| message: false
+#| output: asis
+
+
+from IPython.display import display, HTML
+import pandas as pd
+from IPython.display import display, HTML
+
+# -------------------------------------------------------------------------
+# 1. PARÂMETROS E CARREGAMENTO
+# -------------------------------------------------------------------------
+ANO_ANALISE = 2026
+MES_ANALISE = 8
+
+df = pd.read_excel("drgcc.xlsx")
+df["Competência"] = pd.to_datetime(df["Competência"])
+df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
+
+# Mapeamento exato das colunas
+COL_CLASS = "Classificação Competencia"
+COL_SERVICO = "Tipo Serviço"
+
+# Extração da Letra da Categoria
+df["Cat_Letra"] = df["Categoria DRG CP"].astype(str).str.strip().str[0].str.upper()
+
+# Funções de Formatação
+def fmt_r0(v):
+    if pd.isna(v) or v == 0:
+        return "R$ 0"
+    return f"R$ {v:,.0f}".replace(",", ".")
+
+def fmt_pct(v):
+    if pd.isna(v) or v == 0:
+        return "0,0%"
+    return f"{v:,.1f}%".replace(".", ",")
+
+def resumo_periodo(df_base):
+    """Consolida um recorte e calcula o percentual vertical de cada linha."""
+    df_grouped = (
+        df_base.groupby(["Cat_Letra", COL_CLASS])["Valor"]
+        .sum()
+        .reset_index()
+    )
+    rec_bruta = df_grouped[df_grouped["Cat_Letra"] == "A"]["Valor"].sum()
+    rec_bruta_abs = abs(rec_bruta) if rec_bruta != 0 else 0.0
+    val_deducoes = df_grouped[df_grouped["Cat_Letra"] != "A"]["Valor"].sum()
+    resultado_liquido = rec_bruta - abs(val_deducoes)
+
+    valores = {
+        (row["Cat_Letra"], row[COL_CLASS]): row["Valor"]
+        for _, row in df_grouped.iterrows()
+    }
+
+    return {
+        "valores": valores,
+        "receita": rec_bruta,
+        "receita_abs": rec_bruta_abs,
+        "resultado": resultado_liquido,
+    }
+
+def formatar_valor_linha(cat_letra, valor, receita_abs):
+    if cat_letra == "A":
+        return fmt_r0(valor)
+    pct = (abs(valor) / receita_abs * 100) if receita_abs > 0 else 0.0
+    return fmt_pct(pct)
+
+def gerar_tabela_av(periodos, titulo_tabela):
+    """Gera o HTML de Análise Vertical comparando um ou mais recortes."""
+    periodos_validos = [(rotulo, df_base) for rotulo, df_base in periodos if not df_base.empty]
+
+    if not periodos_validos:
+        return f"""
+        <div style="margin-bottom: 30px; padding: 15px; background: #FFFBEB; border: 1px solid #FCD34D; border-radius: 8px; color: #92400E; font-family: sans-serif; font-size: 13px;">
+            <b>{titulo_tabela}:</b> Nenhum dado encontrado para o filtro aplicado.
+        </div>
+        """
+
+    resumos = [(rotulo, resumo_periodo(df_base)) for rotulo, df_base in periodos_validos]
+    chaves_linhas = sorted(
+        {chave for _, resumo in resumos for chave in resumo["valores"].keys()},
+        key=lambda chave: (chave[0], chave[1]),
+    )
+
+    rows_html = ""
+    for cat_letra, classificacao in chaves_linhas:
+        cor_val = "#047857" if cat_letra == "A" else "#1E293B"
+        cells_html = ""
+        for _, resumo in resumos:
+            valor = resumo["valores"].get((cat_letra, classificacao), 0.0)
+            cells_html += f"""
+            <td style="padding: 10px; text-align: right; color: {cor_val}; font-weight: 500;">{formatar_valor_linha(cat_letra, valor, resumo["receita_abs"])}</td>
+            """
+
+        rows_html += f"""
+        <tr style="border-bottom: 1px solid #E2E8F0;">
+            <td style="padding: 10px; font-weight: 600; color: #334155;">[{cat_letra}] {classificacao}</td>
+            {cells_html}
+        </tr>
+        """
+
+    resultado_cells_html = ""
+    for _, resumo in resumos:
+        resultado = resumo["resultado"]
+        resultado_pct = (resultado / resumo["receita_abs"] * 100) if resumo["receita_abs"] > 0 else 0.0
+        cor_resultado = "#047857" if resultado >= 0 else "#B91C1C"
+        resultado_cells_html += f"""
+        <td style="padding: 14px 10px; text-align: right; color: {cor_resultado}; font-size: 14px;">{fmt_pct(resultado_pct)}</td>
+        """
+
+    headers_periodos = "".join(
+        f'<th style="padding: 12px 10px; text-align: right; font-weight: 600;">{rotulo}</th>'
+        for rotulo, _ in resumos
+    )
+
+    return f"""
+    <div style="margin-bottom: 45px; background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+        <div style="background: #0F172A; padding: 14px 20px;">
+            <h3 style="margin: 0; color: #FFFFFF; font-size: 15px; font-weight: 600;">{titulo_tabela}</h3>
+        </div>
+        <table style="width: 100%; border-collapse: collapse; font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px;">
+            <thead>
+                <tr style="background: #F8FAFC; border-bottom: 2px solid #E2E8F0; color: #64748B; text-align: left;">
+                    <th style="padding: 12px 10px; font-weight: 600;">Classificação Competência</th>
+                    {headers_periodos}
+                </tr>
+            </thead>
+            <tbody>
+                {rows_html}
+            </tbody>
+            <tfoot>
+                <tr style="background: #F1F5F9; border-top: 2px solid #CBD5E1; font-weight: bold;">
+                    <td style="padding: 14px 10px; color: #0F172A; font-size: 14px;">RESULTADO LÍQUIDO</td>
+                    {resultado_cells_html}
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+    """
+
+# -------------------------------------------------------------------------
+# 2. RENDERIZAÇÃO DAS TABELAS
+# -------------------------------------------------------------------------
+
+# Tabela 1: Mês Analisado
+df_mes = df[(df["Competência"].dt.year == ANO_ANALISE) & (df["Competência"].dt.month == MES_ANALISE)]
+df_mes_ano_ant = df[(df["Competência"].dt.year == (ANO_ANALISE - 1)) & (df["Competência"].dt.month == MES_ANALISE)]
+display(HTML(gerar_tabela_av(
+    [
+        (f"{MES_ANALISE:02d}/{ANO_ANALISE}", df_mes),
+        (f"{MES_ANALISE:02d}/{ANO_ANALISE - 1}", df_mes_ano_ant),
+    ],
+    f"1. Análise Vertical — Mês de Referência ({MES_ANALISE:02d}/{ANO_ANALISE})"
+)))
+
+# Tabela 2: Ano Analisado (Acumulado até o mês de referência)
+df_ano = df[(df["Competência"].dt.year == ANO_ANALISE) & (df["Competência"].dt.month <= MES_ANALISE)]
+df_ano_ant_1 = df[(df["Competência"].dt.year == (ANO_ANALISE - 1)) & (df["Competência"].dt.month <= MES_ANALISE)]
+df_ano_ant_2 = df[(df["Competência"].dt.year == (ANO_ANALISE - 2)) & (df["Competência"].dt.month <= MES_ANALISE)]
+display(HTML(gerar_tabela_av(
+    [
+        (f"Acum. {ANO_ANALISE}", df_ano),
+        (f"Acum. {ANO_ANALISE - 1}", df_ano_ant_1),
+        (f"Acum. {ANO_ANALISE - 2}", df_ano_ant_2),
+    ],
+    f"2. Análise Vertical — Acumulado até {MES_ANALISE:02d}/{ANO_ANALISE}"
+)))
+
+# Tabela 3: Segmentação OBRAS (Filtro na coluna Tipo Serviço: OBRA, FABRICAÇÃO, PROJETO/DIAGNO)
+regex_obras = r"OBRA|FABRICAÇ|FABRICAC|PROJETO/DIAGN"
+df_obras = df_ano[
+    df_ano[COL_SERVICO]
+    .astype(str)
+    .str.upper()
+    .str.contains(regex_obras, na=False)
+]
+display(
+    HTML(
+        gerar_tabela_av(
+            [
+                (f"Mês {MES_ANALISE:02d}/{ANO_ANALISE}", df_mes[
+                    df_mes[COL_SERVICO]
+                    .astype(str)
+                    .str.upper()
+                    .str.contains(regex_obras, na=False)
+                ]),
+                (f"Acum. {ANO_ANALISE}", df_obras),
+                (f"Acum. {ANO_ANALISE - 1}", df_ano_ant_1[
+                    df_ano_ant_1[COL_SERVICO]
+                    .astype(str)
+                    .str.upper()
+                    .str.contains(regex_obras, na=False)
+                ]),
+            ],
+            f"3. Análise Vertical — Visão Especial: OBRAS",
+        )
+    )
+)
+
+# Tabela 4: Segmentação MANUTENÇÕES (Filtro na coluna Tipo Serviço)
+df_manut = df_ano[
+    df_ano[COL_SERVICO]
+    .astype(str)
+    .str.upper()
+    .str.contains("MANUTENÇÃO|MANUTENCAO|MANUT", na=False)
+]
+display(
+    HTML(
+        gerar_tabela_av(
+            [
+                (f"Mês {MES_ANALISE:02d}/{ANO_ANALISE}", df_mes[
+                    df_mes[COL_SERVICO]
+                    .astype(str)
+                    .str.upper()
+                    .str.contains("MANUTENÇÃO|MANUTENCAO|MANUT", na=False)
+                ]),
+                (f"Acum. {ANO_ANALISE}", df_manut),
+                (f"Acum. {ANO_ANALISE - 1}", df_ano_ant_1[
+                    df_ano_ant_1[COL_SERVICO]
+                    .astype(str)
+                    .str.upper()
+                    .str.contains("MANUTENÇÃO|MANUTENCAO|MANUT", na=False)
+                ]),
+            ],
+            f"4. Análise Vertical — Visão Especial: MANUTENÇÕES",
+        )
+    )
+)
+```
