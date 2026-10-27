@@ -1,0 +1,128 @@
+/* ===== Paleta ===== */
+:root {
+  --navy: #1B2A4A;
+  --navy-light: #2E4472;
+  --slate: #64748B;
+  --bg-soft: #F7F8FA;
+  --positive: #0F766E;
+  --negative: #B91C1C;
+  --warning: #B45309;
+  --border: #E2E5EA;
+}
+
+body {
+  font-family: -apple-system, "Segoe UI", "Inter", Helvetica, Arial, sans-serif;
+  color: #1E293B;
+  background: #ffffff;
+}
+
+/* ===== Cabeçalho do título ===== */
+#title-block-header {
+  background: linear-gradient(135deg, var(--navy) 0%, var(--navy-light) 100%);
+  color: white;
+  padding: 2.5rem 2rem;
+  border-radius: 10px;
+  margin-bottom: 2rem;
+}
+#title-block-header .title {
+  color: white;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+#title-block-header .subtitle {
+  color: #C7D2E8;
+  font-weight: 400;
+}
+#title-block-header .author, #title-block-header .date {
+  color: #9FB0D0;
+}
+
+/* ===== Títulos de seção ===== */
+h2 {
+  color: var(--navy);
+  font-weight: 700;
+  font-size: 1.4rem;
+  border-bottom: 3px solid var(--navy);
+  padding-bottom: 0.4rem;
+  margin-top: 2.8rem;
+}
+
+/* ===== Cards de KPI ===== */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0 2rem 0;
+}
+.kpi-card {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-left: 5px solid var(--navy);
+  border-radius: 8px;
+  padding: 1.1rem 1.3rem;
+}
+.kpi-card .kpi-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--slate);
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+.kpi-card .kpi-value {
+  font-size: 1.65rem;
+  font-weight: 700;
+  color: var(--navy);
+  line-height: 1.15;
+}
+.kpi-card.positivo { border-left-color: var(--positive); }
+.kpi-card.positivo .kpi-value { color: var(--positive); }
+.kpi-card.negativo { border-left-color: var(--negative); }
+.kpi-card.negativo .kpi-value { color: var(--negative); }
+.kpi-card .kpi-note {
+  font-size: 0.75rem;
+  color: var(--slate);
+  margin-top: 0.3rem;
+}
+
+/* ===== Caixa de alerta ===== */
+.alerta-caixa {
+  background: #FFF7ED;
+  border: 1px solid #FDBA74;
+  border-left: 5px solid var(--warning);
+  border-radius: 8px;
+  padding: 0.9rem 1.2rem;
+  margin: 1rem 0 1.5rem 0;
+  font-size: 0.92rem;
+  color: #7C2D12;
+}
+
+/* ===== Tabelas ===== */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.92rem;
+}
+table thead th {
+  background: var(--navy);
+  color: white;
+  padding: 0.6rem 0.8rem;
+  text-align: left;
+  font-weight: 600;
+}
+table tbody td {
+  padding: 0.55rem 0.8rem;
+  border-bottom: 1px solid var(--border);
+}
+table tbody tr:nth-child(even) {
+  background: var(--bg-soft);
+}
+
+/* ===== Rodapé simples ===== */
+.rodape-nota {
+  color: var(--slate);
+  font-size: 0.8rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.8rem;
+  margin-top: 3rem;
+}

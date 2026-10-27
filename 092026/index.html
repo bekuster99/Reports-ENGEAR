@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Portal de Relatórios Financeiros</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: linear-gradient(135deg, #0F172A 0%, #1E3A8A 50%, #0F172A 100%);
+      min-height: 100vh;
+      color: #F8FAFC;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Cabeçalho */
+    header {
+      padding: 30px 50px 10px 50px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .header-title h1 {
+      font-size: 26px;
+      font-weight: 700;
+      color: #FFFFFF;
+      letter-spacing: -0.5px;
+    }
+
+    .header-title p {
+      font-size: 14px;
+      color: #94A3B8;
+      margin-top: 4px;
+    }
+
+    /* Botão Menu Lateral */
+    .menu-toggle {
+      background: rgba(255, 255, 255, 0.1);
+      color: #FFF;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      padding: 10px 18px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 14px;
+      backdrop-filter: blur(8px);
+      transition: all 0.2s ease;
+    }
+
+    .menu-toggle:hover {
+      background: rgba(255, 255, 255, 0.2);
+      border-color: #38BDF8;
+      color: #38BDF8;
+    }
+
+    /* Container Principal */
+    main {
+      padding: 30px 50px 50px 50px;
+      flex: 1;
+    }
+
+    .section-label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #38BDF8;
+      font-weight: 700;
+      margin-bottom: 12px;
+      margin-top: 25px;
+    }
+
+    .section-label:first-of-type {
+      margin-top: 0;
+    }
+
+    /* Grid de Cards */
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 20px;
+    }
+
+    /* Estilo do Card */
+    .card-item {
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      padding: 20px;
+      text-decoration: none;
+      color: #F8FAFC;
+      backdrop-filter: blur(12px);
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card-item::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 4px;
+      height: 100%;
+      background: #3B82F6;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .card-item:hover {
+      transform: translateY(-4px);
+      background: rgba(30, 41, 59, 0.85);
+      border-color: rgba(56, 189, 248, 0.4);
+      box-shadow: 0 12px 30px -10px rgba(0, 0, 0, 0.5);
+    }
+
+    .card-item:hover::before {
+      opacity: 1;
+    }
+
+    .card-icon {
+      font-size: 24px;
+      margin-bottom: 12px;
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #FFFFFF;
+      margin-bottom: 6px;
+    }
+
+    .card-desc {
+      font-size: 13px;
+      color: #94A3B8;
+      line-height: 1.4;
+    }
+
+    .card-action {
+      margin-top: 16px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #38BDF8;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* Menu Lateral Off-Canvas */
+    .nav-drawer {
+      position: fixed;
+      top: 0;
+      right: -380px;
+      width: 380px;
+      height: 100vh;
+      background: #0F172A;
+      z-index: 99;
+      padding: 80px 30px 30px 30px;
+      box-sizing: border-box;
+      transition: right 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: -10px 0 30px rgba(0,0,0,0.6);
+      overflow-y: auto;
+      border-left: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .nav-drawer.active {
+      right: 0;
+    }
+
+    .drawer-header {
+      font-size: 18px;
+      font-weight: bold;
+      color: #FFF;
+      margin-bottom: 20px;
+      border-bottom: 1px solid #334155;
+      padding-bottom: 10px;
+    }
+
+    .drawer-section-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #64748B;
+      margin-top: 20px;
+      margin-bottom: 10px;
+      font-weight: 700;
+    }
+
+    .nav-link-item {
+      display: block;
+      color: #E2E8F0;
+      text-decoration: none;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 4px;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .nav-link-item:hover {
+      background: #1E293B;
+      color: #38BDF8;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Cabeçalho Principal -->
+  <header>
+    <div class="header-title">
+      <h1>Painel Executivo Mensal</h1>
+      <p>Selecione um relatório abaixo ou utilize o menu de navegação rápida</p>
+    </div>
+    <button class="menu-toggle" onclick="toggleMenu()">☰ Menu Lateral</button>
+  </header>
+
+  <!-- Corpo com os Cards das Páginas -->
+  <main>
+    
+    <!-- Seção 1 -->
+    <div class="section-label">A & B - Receitas e Impostos</div>
+    <div class="cards-grid">
+      <a href="relatoriomensalReceitas.html" class="card-item">
+        <div>
+          <div class="card-icon">📊</div>
+          <div class="card-title">A - Receitas</div>
+          <div class="card-desc">Análise do faturamento bruto e entradas operacionais.</div>
+        </div>
+        <div class="card-action">Acessar relatório →</div>
+      </a>
+
+      <a href="relatoriomensalImpostos.html" class="card-item">
+        <div>
+          <div class="card-icon">🏛️</div>
+          <div class="card-title">B - Impostos sobre Receita e Deduções</div>
+          <div class="card-desc">Deduções incidentes sobre receita e carga tributária direta.</div>
+        </div>
+        <div class="card-action">Acessar relatório →</div>
+      </a>
+    </div>
+
+    <!-- Seção 2 -->
+    <div class="section-label">C1, C2, C3 - Custos Operacionais</div>
+    <div class="cards-grid">
+      <a href="relatoriomensalC1.html" class="card-item">
+        <div>
+          <div class="card-icon">👥</div>
+          <div class="card-title">C1 - Custo Pessoal</div>
+          <div class="card-desc">Custos diretos com folha de pagamento e encargos da operação.</div>
+        </div>
+        <div class="card-action">Acessar relatório →</div>
+      </a>
+
+      <a href="relatoriomensalC2.html" class="card-item">
+        <div>
+          <div class="card-icon">🏗️</div>
+          <div class="card-title">C2 - Custos Diretos</div>
+          <div class="card-desc">Custos de insumos, produção, obras e aplicação direta.</div>
+        </div>
+        <div class="card-action">Acessar relatório →</div>
+      </a>
+
+      <a href="relatoriomensalC3.html" class="card-item">
+        <div>
+          <div class="card-icon">📣</div>
+          <div class="card-title">C3 - Despesas Variáveis com Venda</div>
+          <div class="card-desc">Comissões, fretes e custos diretamente atrelados a vendas.</div>
+        </div>
+        <div class="card-action">Acessar relatório →</div>
+      </a>
+    </div>
+
+    <!-- Seção 3 -->
+    <div class="section-label">D1, D2, D3 - Despesas Estruturais</div>
+    <div class="cards-grid">
+      <a href="relatoriomensalD1.html" class="card-item">
+        <div>
+          <div class="card-icon">💼</div>
+          <div class="card-title">D1 - Despesas Pessoal Adm</div>
+          <div class="card-desc">Custos com equipe administrativa e gestão corporativa.</div>
+        </div>
+        <div class="card-action">Acessar relatório →</div>
+      </a>
+
+      <a href="relatoriomensalD2.html" class="card-item">
+        <div>
+          <div class="card-icon">🏢</div>
+          <div class="card-title">D2 - Despesas Administrativas</div>
+          <div class="card-desc">Gastos gerais da sede, infraestrutura, serviços e viagens.</div>
+        </div>
+        <div class="card-action">Acessar relatório →</div>
+      </a>
+
+      <a href="relatoriomensalD3.html" class="card-item">
+        <div>
+          <div class="card-icon">🛠️</div>
+          <div class="card-title">D3 - Custos Indiretos</div>
+          <div class="card-desc">Despesas indiretas de apoio à estrutura operacional.</div>
+        </div>
+        <div class="card-action">Acessar relatório →</div>
+      </a>
+    </div>
+
+    <!-- Seção 4 -->
+    <div class="section-label">Consolidação & Performance</div>
+    <div class="cards-grid">
+      <a href="relatoriomensalindicadores.html" class="card-item">
+        <div>
+          <div class="card-icon">📈</div>
+          <div class="card-title">Painel de Indicadores</div>
+          <div class="card-desc">Métricas consolidadas, margens e performance do período.</div>
+        </div>
+        <div class="card-action">Acessar relatório →</div>
+      </a>
+
+      <a href="relatoriomensalav.html" class="card-item">
+        <div>
+          <div class="card-icon">📋</div>
+          <div class="card-title">Análise Vertical (AV%)</div>
+          <div class="card-desc">Distribuição percentual de cada conta sobre a Receita Bruta.</div>
+        </div>
+        <div class="card-action">Acessar relatório →</div>
+      </a>
+    </div>
+
+  </main>
+
+  <!-- Menu Lateral Off-Canvas -->
+  <div class="nav-drawer" id="navDrawer">
+    <div class="drawer-header">Navegação Direta</div>
+
+    <div class="drawer-section-title">Receitas & Impostos</div>
+    <a href="relatoriomensalReceitas.html" class="nav-link-item">📊 A - Receitas</a>
+    <a href="relatoriomensalImpostos.html" class="nav-link-item">🏛️ B - Impostos sobre Receita e Deduções</a>
+
+    <div class="drawer-section-title">Custos Operacionais</div>
+    <a href="relatoriomensalC1.html" class="nav-link-item">👥 C1 - Custo Pessoal</a>
+    <a href="relatoriomensalC2.html" class="nav-link-item">🏗️ C2 - Custos Diretos</a>
+    <a href="relatoriomensalC3.html" class="nav-link-item">📣 C3 - Despesas Variáveis com Venda</a>
+
+    <div class="drawer-section-title">Despesas Estruturais</div>
+    <a href="relatoriomensalD1.html" class="nav-link-item">💼 D1 - Despesas Pessoal Adm</a>
+    <a href="relatoriomensalD2.html" class="nav-link-item">🏢 D2 - Despesas Administrativas</a>
+    <a href="relatoriomensalD3.html" class="nav-link-item">🛠️ D3 - Custos Indiretos</a>
+
+    <div class="drawer-section-title">Consolidação & Análise</div>
+    <a href="relatoriomensalindicadores.html" class="nav-link-item">📈 Painel de Indicadores</a>
+    <a href="relatoriomensalav.html" class="nav-link-item">📋 Análise Vertical (AV%)</a>
+  </div>
+
+  <script>
+    function toggleMenu() {
+      const drawer = document.getElementById('navDrawer');
+      drawer.classList.toggle('active');
+    }
+
+    document.addEventListener('click', function(event) {
+      const drawer = document.getElementById('navDrawer');
+      const button = document.querySelector('.menu-toggle');
+      if (!drawer.contains(event.target) && !button.contains(event.target) && drawer.classList.contains('active')) {
+        drawer.classList.remove('active');
+      }
+    });
+  </script>
+
+</body>
+</html>
