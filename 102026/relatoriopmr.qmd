@@ -1,0 +1,286 @@
+---
+title: "Análise de PMR"
+subtitle: "DRE Mensal, Acumulado Anual e Segmentações Estratégicas"
+format:
+  html:
+    page-layout: full
+    theme: cosmo
+    toc: false
+    css: styles.css
+    embed-resources: true
+    include-in-header: plotly-head.html
+---
+---
+```{python}
+
+#| echo: false
+#| warning: false
+#| message: false
+
+import json
+import pandas as pd
+from IPython.display import display, HTML
+
+# =========================================================================
+# 1. PARÂMETROS (edite aqui, no código)
+# =========================================================================
+ARQUIVO = "DRGCP.xlsx"
+ANO_PADRAO = 2026
+MES_PADRAO = 10
+
+COLUNA_REFERENCIA = "Competência"   # emissão da receita
+COLUNA_RECEBIMENTO = "Pagamento"    # data do recebimento
+COLUNA_MASCARA = "Máscara"
+CODIGO_RECEITA = "A"                # só receitas entram no PMR
+COR_PONDERADO = "#15803D"           # verde
+COR_SIMPLES = "#86EFAC"
+
+# =========================================================================
+# 2. CARGA E PREPARO
+# =========================================================================
+hoje = pd.Timestamp.today().normalize()
+
+df = pd.read_excel(ARQUIVO)
+df[COLUNA_REFERENCIA] = pd.to_datetime(df[COLUNA_REFERENCIA], errors="coerce")
+df[COLUNA_RECEBIMENTO] = pd.to_datetime(df[COLUNA_RECEBIMENTO], errors="coerce")
+df["Valor Original"] = pd.to_numeric(df["Valor Original"], errors="coerce").fillna(0)
+
+for col in ["Centro de Custo", "Empresa", COLUNA_MASCARA]:
+    df[col] = df[col].fillna("").astype(str).str.strip().replace("", "(vazio)")
+
+df["codigo_classe"] = (
+    df["Classificação Competencia"].astype(str).str.split(" - ").str[0].str.strip()
+)
+
+# Base do PMR: somente receitas (código A), sem valores zerados e com datas válidas
+base = df[(df["codigo_classe"] == CODIGO_RECEITA) & (df["Valor Original"] != 0)].copy()
+base = base.dropna(subset=[COLUNA_REFERENCIA, COLUNA_RECEBIMENTO]).copy()
+
+base["Dias"] = (base[COLUNA_RECEBIMENTO] - base[COLUNA_REFERENCIA]).dt.days
+base["Peso"] = base["Valor Original"]
+base["Peso_x_Dias"] = base["Peso"] * base["Dias"]
+base["Mes"] = base[COLUNA_REFERENCIA].dt.to_period("M").dt.strftime("%Y-%m")
+
+n_lancamentos = len(base)
+n_futuros = int((base[COLUNA_RECEBIMENTO] > hoje).sum())
+n_dias_negativos = int((base["Dias"] < 0).sum())
+n_estornos = int((base["Valor Original"] < 0).sum())
+
+# Agregação para recálculo exato no navegador
+agg = (
+    base.groupby(["Empresa", "Centro de Custo", COLUNA_MASCARA, "Mes"], as_index=False)
+    .agg(
+        soma_peso=("Peso", "sum"),
+        soma_peso_dias=("Peso_x_Dias", "sum"),
+        soma_dias=("Dias", "sum"),
+        qtd=("Dias", "size"),
+    )
+    .rename(columns={"Centro de Custo": "centro", COLUNA_MASCARA: "mascara"})
+)
+
+dados_json = json.dumps(agg.to_dict(orient="records"), ensure_ascii=False, default=float)
+centros_json = json.dumps(sorted(agg["centro"].unique().tolist()), ensure_ascii=False)
+mascaras_json = json.dumps(sorted(agg["mascara"].unique().tolist()), ensure_ascii=False)
+anos_json = json.dumps(sorted({m[:4] for m in agg["Mes"]}))
+
+# =========================================================================
+# 3. NOTAS DE METODOLOGIA
+# =========================================================================
+notas_html = f"""
+<div style="font-size:12px; color:#475569; background:#F8FAFC; border-left:3px solid #CBD5E1; padding:10px 14px; line-height:1.6; margin-bottom:10px;">
+  <b>Notas de metodologia</b>
+  <ol style="margin:6px 0 0 18px; padding:0;">
+    <li><b>Escopo:</b> somente receitas (classificação A). Nenhuma outra classe entra no PMR.</li>
+    <li><b>Mês de referência:</b> data de emissão (competência).</li>
+    <li><b>Data de recebimento:</b> coluna Pagamento. Dias = recebimento − emissão.</li>
+    <li><b>Estornos:</b> {n_estornos:,} lançamentos de receita têm valor negativo e entram com peso negativo, reduzindo a média.</li>
+    <li><b>Recebimentos futuros considerados:</b> {n_futuros:,} dos {n_lancamentos:,} lançamentos têm data de recebimento posterior a {hoje.strftime('%d/%m/%Y')}. Eles entram como recebimento previsto.</li>
+    <li><b>Dias negativos:</b> {n_dias_negativos:,} lançamentos têm recebimento anterior à emissão e entram como dias negativos.</li>
+    <li><b>Filtros:</b> centro de custo e máscara são combinados (E). A lista de máscaras contém apenas máscaras de receita.</li>
+    <li><b>Centro de custo ou Empresa em branco:</b> aparecem como (vazio) na lista de seleção.</li>
+    <li><b>Empresas:</b> o PMR Geral inclui ENGEAR SL, ENGEAR MNT e INTEGRA.</li>
+    <li><b>Fórmulas:</b> PMR ponderado = soma(valor × dias) ÷ soma(valor). PMR simples = média aritmética dos dias por lançamento, sem peso.</li>
+  </ol>
+</div>
+"""
+
+# =========================================================================
+# 4. HTML + JAVASCRIPT
+# =========================================================================
+template = """
+<div style="font-family: 'Segoe UI', Arial;">
+  <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start; margin-bottom:12px;">
+    <label style="font-size:13px;">Mês<br>
+      <select id="sel-mes" style="padding:6px; min-width:110px;"></select></label>
+    <label style="font-size:13px;">Ano<br>
+      <select id="sel-ano" style="padding:6px; min-width:110px;"></select></label>
+    <label style="font-size:13px;">Centros de custo<br>
+      <select id="sel-centro" multiple size="6" style="padding:6px; min-width:380px;"></select></label>
+    <label style="font-size:13px;">Máscaras (receita)<br>
+      <select id="sel-mascara" multiple size="6" style="padding:6px; min-width:380px;"></select></label>
+  </div>
+  <p style="font-size:12px; color:#64748B; margin-top:0;">
+    Ctrl + clique para marcar vários itens em cada lista. Sem nenhum marcado, o relatório considera todos. Os dois filtros se combinam.
+  </p>
+
+  __NOTAS__
+
+  <h3 class="mascara-titulo" style="margin-top:30px;">PMR Geral</h3>
+  <div id="kpi-geral"></div>
+  <div id="grafico-geral"></div>
+</div>
+
+<script>
+const DADOS = __DADOS__;
+const CENTROS = __CENTROS__;
+const MASCARAS = __MASCARAS__;
+const ANOS = __ANOS__;
+const MES_PAD = __MES_PAD__;
+const ANO_PAD = __ANO_PAD__;
+const NOMES_MES = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+const BLOCOS = [
+  {id: "geral", titulo: "PMR Geral", Empresa: null},
+];
+
+const selMes = document.getElementById("sel-mes");
+const selAno = document.getElementById("sel-ano");
+const selCentro = document.getElementById("sel-centro");
+const selMascara = document.getElementById("sel-mascara");
+
+NOMES_MES.forEach((n, i) => selMes.add(new Option(n, String(i + 1).padStart(2, "0"), false, i + 1 === MES_PAD)));
+ANOS.forEach(a => selAno.add(new Option(a, a, false, Number(a) === ANO_PAD)));
+CENTROS.forEach(c => selCentro.add(new Option(c, c)));
+MASCARAS.forEach(m => selMascara.add(new Option(m, m)));
+
+function addMeses(key, k) {
+  const [a, m] = key.split("-").map(Number);
+  const t = a * 12 + (m - 1) + k;
+  return Math.floor(t / 12) + "-" + String((t % 12) + 1).padStart(2, "0");
+}
+function janela(key, n) {
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) out.push(addMeses(key, -i));
+  return out;
+}
+function chaveAtual() { return selAno.value + "-" + selMes.value; }
+function filtrosSel() {
+  return {
+    centros: Array.from(selCentro.selectedOptions).map(o => o.value),
+    mascaras: Array.from(selMascara.selectedOptions).map(o => o.value)
+  };
+}
+function rotulo(k) { return NOMES_MES[Number(k.slice(5, 7)) - 1] + "/" + k.slice(0, 4); }
+
+function metricas(meses, Empresa, f) {
+  const set = new Set(meses);
+  let sp = 0, sw = 0, sd = 0, n = 0;
+  for (const r of DADOS) {
+    if (!set.has(r.Mes)) continue;
+    if (Empresa && r.Empresa !== Empresa) continue;
+    if (f.centros.length && !f.centros.includes(r.centro)) continue;
+    if (f.mascaras.length && !f.mascaras.includes(r.mascara)) continue;
+    sp += r.soma_peso_dias;
+    sw += r.soma_peso;
+    sd += r.soma_dias;
+    n  += r.qtd;
+  }
+  return {
+    pond: sw !== 0 ? sp / sw : null,
+    simp: n > 0 ? sd / n : null
+  };
+}
+
+const fmtDias = v => v === null ? "sem base" : v.toFixed(1).replace(".", ",") + " dias";
+const fmtNum = v => v === null ? "" : v.toFixed(1).replace(".", ",");
+const fmtVar = v => v === null ? "sem base" :
+  (v >= 0 ? "+" : "") + v.toFixed(1).replace(".", ",") + " dias";
+
+function cardHtml(label, valor, sub) {
+  return `<div class="kpi-card" style="background:#F8FAFC; padding:15px; border-radius:8px; border:1px solid #E2E8F0;">
+    <div class="kpi-label" style="font-size:11px; color:#64748B;">${label}</div>
+    <div class="kpi-value" style="font-size:18px; font-weight:bold; color:#0F172A;">${valor}</div>
+    <div style="font-size:11px; color:#64748B; margin-top:4px;">${sub}</div>
+  </div>`;
+}
+
+function renderBloco(b) {
+  const key = chaveAtual();
+  const f = filtrosSel();
+  const mes = metricas([key], b.Empresa, f);
+  const ano = metricas(janela(key, Number(key.slice(5, 7))), b.Empresa, f);
+  const ant = metricas([addMeses(key, -12)], b.Empresa, f);
+  const varPond = (mes.pond !== null && ant.pond !== null) ? mes.pond - ant.pond : null;
+  const varSimp = (mes.simp !== null && ant.simp !== null) ? mes.simp - ant.simp : null;
+
+  document.getElementById("kpi-" + b.id).innerHTML = `
+    <div class="kpi-grid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:15px; margin:20px 0 25px;">
+      ${cardHtml("PMR do Mês (" + rotulo(key) + ") · ponderado", fmtDias(mes.pond), "Simples: " + fmtDias(mes.simp))}
+      ${cardHtml("PMR do Ano (Jan até " + rotulo(key) + ") · ponderado", fmtDias(ano.pond), "Simples: " + fmtDias(ano.simp))}
+      ${cardHtml("Variação vs. mesmo mês do ano anterior · ponderado", fmtVar(varPond), "Simples: " + fmtVar(varSimp))}
+    </div>`;
+
+  if (typeof Plotly === "undefined") {
+    document.getElementById("grafico-" + b.id).innerHTML =
+      '<p style="color:#B91C1C; font-size:13px;">Gráfico indisponível: a biblioteca Plotly não carregou.</p>';
+    return;
+  }
+
+  const serie = janela(key, 13);
+  const pond = serie.map(m => metricas([m], b.Empresa, f).pond);
+  const simp = serie.map(m => metricas([m], b.Empresa, f).simp);
+  const x = serie.map(rotulo);
+
+  Plotly.react("grafico-" + b.id, [
+    {
+      type: "bar",
+      name: "PMR ponderado",
+      x: x,
+      y: pond,
+      text: pond.map(fmtNum),
+      textposition: "outside",
+      marker: { color: "__COR_PONDERADO__" },
+      hovertemplate: "<b>Ponderado</b><br>%{x}: %{y:.1f} dias<extra></extra>"
+    },
+    {
+      type: "bar",
+      name: "PMR simples",
+      x: x,
+      y: simp,
+      text: simp.map(fmtNum),
+      textposition: "outside",
+      marker: { color: "__COR_SIMPLES__" },
+      hovertemplate: "<b>Simples</b><br>%{x}: %{y:.1f} dias<extra></extra>"
+    }
+  ], {
+    title: { text: b.titulo + " · Últimos 13 meses", font: { size: 14 } },
+    barmode: "group",
+    yaxis: { title: "Dias" },
+    xaxis: { title: null },
+    legend: { orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "right", x: 1 },
+    template: "plotly_white",
+    font: { family: "Segoe UI, Arial", size: 12, color: "#1E293B" },
+    margin: { t: 60, b: 30 },
+    height: 400,
+    plot_bgcolor: "white"
+  }, { responsive: true, displayModeBar: false });
+}
+
+function renderTudo() { BLOCOS.forEach(renderBloco); }
+[selMes, selAno, selCentro, selMascara].forEach(el => el.addEventListener("change", renderTudo));
+renderTudo();
+</script>
+"""
+
+html = (
+    template.replace("__NOTAS__", notas_html)
+    .replace("__DADOS__", dados_json)
+    .replace("__CENTROS__", centros_json)
+    .replace("__MASCARAS__", mascaras_json)
+    .replace("__ANOS__", anos_json)
+    .replace("__MES_PAD__", str(MES_PADRAO))
+    .replace("__ANO_PAD__", str(ANO_PADRAO))
+    .replace("__COR_PONDERADO__", COR_PONDERADO)
+    .replace("__COR_SIMPLES__", COR_SIMPLES)
+)
+display(HTML(html))
+```

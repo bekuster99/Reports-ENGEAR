@@ -1,0 +1,327 @@
+---
+title: "Análise de PMR"
+subtitle: "DRE Mensal, Acumulado Anual e Segmentações Estratégicas"
+format:
+  html:
+    page-layout: full
+    theme: cosmo
+    toc: false
+    css: styles.css
+    embed-resources: true
+    include-in-header: plotly-head.html
+---
+---
+```{python}
+
+
+#| echo: false
+#| warning: false
+#| message: false
+import json
+import pandas as pd
+from IPython.display import display, HTML
+
+# =========================================================================
+# 1. PARÂMETROS (edite aqui, no código)
+# =========================================================================
+ARQUIVO = "DRGCP.xlsx"
+ANO_PADRAO = 2026
+MES_PADRAO = 10
+
+COLUNA_REFERENCIA = "Competência"   # emissão (competência)
+COLUNA_PAGAMENTO = "Pagamento"      # pagamento (PMP) ou recebimento (PMR)
+
+# PMP: despesas. Códigos fora do cálculo:
+# A = receitas | B = impostos s/ receita | C1 = folha | D1 = folha
+# D4 = intercompany | E = depreciação | F = financeiras | O = impostos s/ lucro
+CODIGOS_EXCLUIDOS_PMP = {"A", "B", "C1", "D1", "D4", "E", "F", "O"}
+
+# PMR: somente receitas
+CODIGO_RECEITA = "A"
+
+# Cores (PMP em verde, PMR em vermelho; escuro = ponderado, claro = simples)
+COR_PMP_POND = "#C0392B"
+COR_PMP_SIMP = "#F5B7B1"
+COR_PMR_POND = "#15803D"
+COR_PMR_SIMP = "#86EFAC"
+
+# =========================================================================
+# 2. CARGA E PREPARO
+# =========================================================================
+hoje = pd.Timestamp.today().normalize()
+
+df = pd.read_excel(ARQUIVO)
+df[COLUNA_REFERENCIA] = pd.to_datetime(df[COLUNA_REFERENCIA], errors="coerce")
+df[COLUNA_PAGAMENTO] = pd.to_datetime(df[COLUNA_PAGAMENTO], errors="coerce")
+df["Valor Original"] = pd.to_numeric(df["Valor Original"], errors="coerce").fillna(0)
+
+for col in ["Centro de Custo", "Empresa"]:
+    df[col] = df[col].fillna("").astype(str).str.strip().replace("", "(vazio)")
+
+df["codigo_classe"] = (
+    df["Classificação Competencia"].astype(str).str.split(" - ").str[0].str.strip()
+)
+
+# Bases
+mascara_fora = df["codigo_classe"].isin(CODIGOS_EXCLUIDOS_PMP)
+base_pmp = df[~mascara_fora & (df["Valor Original"] < 0)].copy()
+base_pmr = df[(df["codigo_classe"] == CODIGO_RECEITA) & (df["Valor Original"] != 0)].copy()
+
+n_positivos_removidos_pmp = int(((~mascara_fora) & (df["Valor Original"] > 0)).sum())
+n_estornos_pmr = int((base_pmr["Valor Original"] < 0).sum())
+
+
+def prepara(base, tipo):
+    """Agregação mensal por empresa e centro para um indicador (PMP ou PMR)."""
+    base = base.dropna(subset=[COLUNA_REFERENCIA, COLUNA_PAGAMENTO]).copy()
+    base["Dias"] = (base[COLUNA_PAGAMENTO] - base[COLUNA_REFERENCIA]).dt.days
+    base["Peso"] = base["Valor Original"]
+    base["Peso_x_Dias"] = base["Peso"] * base["Dias"]
+    base["Mes"] = base[COLUNA_REFERENCIA].dt.to_period("M").dt.strftime("%Y-%m")
+
+    stats = {
+        "n": len(base),
+        "futuros": int((base[COLUNA_PAGAMENTO] > hoje).sum()),
+        "negativos": int((base["Dias"] < 0).sum()),
+    }
+
+    agg = (
+        base.groupby(["Empresa", "Centro de Custo", "Mes"], as_index=False)
+        .agg(
+            soma_peso=("Peso", "sum"),
+            soma_peso_dias=("Peso_x_Dias", "sum"),
+            soma_dias=("Dias", "sum"),
+            qtd=("Dias", "size"),
+        )
+        .rename(columns={"Centro de Custo": "centro"})
+    )
+    agg["tipo"] = tipo
+    return agg, stats
+
+
+agg_pmp, st_pmp = prepara(base_pmp, "PMP")
+agg_pmr, st_pmr = prepara(base_pmr, "PMR")
+dados = pd.concat([agg_pmp, agg_pmr], ignore_index=True)
+
+dados_json = json.dumps(dados.to_dict(orient="records"), ensure_ascii=False, default=float)
+centros_json = json.dumps(sorted(dados["centro"].unique().tolist()), ensure_ascii=False)
+anos_json = json.dumps(sorted({m[:4] for m in dados["Mes"]}))
+
+# =========================================================================
+# 3. NOTAS DE METODOLOGIA
+# =========================================================================
+notas_html = f"""
+<div style="font-size:12px; color:#475569; background:#F8FAFC; border-left:3px solid #CBD5E1; padding:10px 14px; line-height:1.6; margin-bottom:10px;">
+  <b>Notas de metodologia</b>
+  <ol style="margin:6px 0 0 18px; padding:0;">
+    <li><b>PMP (verde):</b> somente despesas (valor negativo). Ficam de fora as classes A, B, C1, D1, D4, E, F e O. Folha salarial (C1 e D1) não entra no PMP.</li>
+    <li><b>PMR (vermelho):</b> somente receitas (classificação A). Estornos de receita entram com peso negativo.</li>
+    <li><b>Mês de referência:</b> data de emissão (competência) para os dois indicadores.</li>
+    <li><b>Prazo:</b> PMP usa a data de pagamento e PMR usa a data de recebimento (coluna Pagamento). Dias = data de pagamento/recebimento − emissão.</li>
+    <li><b>Valores positivos de despesa removidos:</b> {n_positivos_removidos_pmp:,} lançamentos fora das classes excluídas, com valor positivo, não entram no PMP.</li>
+    <li><b>Estornos de receita:</b> {n_estornos_pmr:,} lançamentos de receita têm valor negativo e reduzem o PMR.</li>
+    <li><b>Pagamentos e recebimentos futuros:</b> PMP {st_pmp['futuros']:,} de {st_pmp['n']:,} lançamentos e PMR {st_pmr['futuros']:,} de {st_pmr['n']:,} têm data posterior a {hoje.strftime('%d/%m/%Y')}. Entram como data prevista.</li>
+    <li><b>Dias negativos:</b> PMP {st_pmp['negativos']:,} e PMR {st_pmr['negativos']:,} lançamentos têm data anterior à emissão e entram como dias negativos.</li>
+    <li><b>Filtro:</b> somente centro de custo. Sem nenhum marcado, o relatório considera todos.</li>
+    <li><b>Colunas:</b> cada indicador é uma coluna empilhada. A parte de baixo é o ponderado e a de cima é o simples. A altura total não representa um prazo. Leia cada segmento separadamente.</li>
+    <li><b>Fórmulas:</b> PMP/PMR ponderado = soma(valor × dias) ÷ soma(valor). Simples = média aritmética dos dias por lançamento, sem peso.</li>
+  </ol>
+</div>
+"""
+
+# =========================================================================
+# 4. HTML + JAVASCRIPT
+# =========================================================================
+template = """
+<div style="font-family: 'Segoe UI', Arial;">
+  <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start; margin-bottom:12px;">
+    <label style="font-size:13px;">Mês<br>
+      <select id="sel-mes" style="padding:6px; min-width:110px;"></select></label>
+    <label style="font-size:13px;">Ano<br>
+      <select id="sel-ano" style="padding:6px; min-width:110px;"></select></label>
+    <label style="font-size:13px;">Centros de custo<br>
+      <select id="sel-centro" multiple size="6" style="padding:6px; min-width:420px;"></select></label>
+  </div>
+  <p style="font-size:12px; color:#64748B; margin-top:0;">
+    Ctrl + clique para marcar vários centros. Sem nenhum marcado, o relatório considera todos.
+  </p>
+
+  __NOTAS__
+
+  <h3 class="mascara-titulo" style="margin-top:30px;">PMP x PMR · Geral</h3>
+  <div id="kpi-geral"></div>
+  <div id="grafico-geral"></div>
+  <h3 class="mascara-titulo" style="margin-top:40px;">PMP x PMR · ENGEAR SL</h3>
+  <div id="kpi-sl"></div>
+  <div id="grafico-sl"></div>
+  <h3 class="mascara-titulo" style="margin-top:40px;">PMP x PMR · ENGEAR MNT</h3>
+  <div id="kpi-mnt"></div>
+  <div id="grafico-mnt"></div>
+</div>
+
+<script>
+const DADOS = __DADOS__;
+const CENTROS = __CENTROS__;
+const ANOS = __ANOS__;
+const MES_PAD = __MES_PAD__;
+const ANO_PAD = __ANO_PAD__;
+const CORES = {
+  PMP_pond: "__COR_PMP_POND__",
+  PMP_simp: "__COR_PMP_SIMP__",
+  PMR_pond: "__COR_PMR_POND__",
+  PMR_simp: "__COR_PMR_SIMP__"
+};
+const NOMES_MES = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+const BLOCOS = [
+  {id: "geral", titulo: "Geral", Empresa: null},
+  {id: "sl",    titulo: "ENGEAR SL", Empresa: "ENGEAR SL"},
+  {id: "mnt",   titulo: "ENGEAR MNT", Empresa: "ENGEAR MNT"}
+];
+
+const selMes = document.getElementById("sel-mes");
+const selAno = document.getElementById("sel-ano");
+const selCentro = document.getElementById("sel-centro");
+
+NOMES_MES.forEach((n, i) => selMes.add(new Option(n, String(i + 1).padStart(2, "0"), false, i + 1 === MES_PAD)));
+ANOS.forEach(a => selAno.add(new Option(a, a, false, Number(a) === ANO_PAD)));
+CENTROS.forEach(c => selCentro.add(new Option(c, c)));
+
+function addMeses(key, k) {
+  const [a, m] = key.split("-").map(Number);
+  const t = a * 12 + (m - 1) + k;
+  return Math.floor(t / 12) + "-" + String((t % 12) + 1).padStart(2, "0");
+}
+function janela(key, n) {
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) out.push(addMeses(key, -i));
+  return out;
+}
+function chaveAtual() { return selAno.value + "-" + selMes.value; }
+function centrosSel() { return Array.from(selCentro.selectedOptions).map(o => o.value); }
+function rotulo(k) { return NOMES_MES[Number(k.slice(5, 7)) - 1] + "/" + k.slice(0, 4); }
+
+function metricas(meses, Empresa, centros, tipo) {
+  const set = new Set(meses);
+  let sp = 0, sw = 0, sd = 0, n = 0;
+  for (const r of DADOS) {
+    if (r.tipo !== tipo) continue;
+    if (!set.has(r.Mes)) continue;
+    if (Empresa && r.Empresa !== Empresa) continue;
+    if (centros.length && !centros.includes(r.centro)) continue;
+    sp += r.soma_peso_dias;
+    sw += r.soma_peso;
+    sd += r.soma_dias;
+    n  += r.qtd;
+  }
+  return {
+    pond: sw !== 0 ? sp / sw : null,
+    simp: n > 0 ? sd / n : null
+  };
+}
+
+const fmtDias = v => v === null ? "sem base" : v.toFixed(1).replace(".", ",") + " dias";
+const fmtNum = v => v === null ? "" : v.toFixed(1).replace(".", ",");
+const fmtVar = v => v === null ? "sem base" :
+  (v >= 0 ? "+" : "") + v.toFixed(1).replace(".", ",") + " dias";
+
+function cardHtml(label, valor, sub) {
+  return `<div class="kpi-card" style="background:#F8FAFC; padding:15px; border-radius:8px; border:1px solid #E2E8F0;">
+    <div class="kpi-label" style="font-size:11px; color:#64748B;">${label}</div>
+    <div class="kpi-value" style="font-size:18px; font-weight:bold; color:#0F172A;">${valor}</div>
+    <div style="font-size:11px; color:#64748B; margin-top:4px;">${sub}</div>
+  </div>`;
+}
+
+function cardsTipo(b, key, c, tipo) {
+  const mes = metricas([key], b.Empresa, c, tipo);
+  const ano = metricas(janela(key, Number(key.slice(5, 7))), b.Empresa, c, tipo);
+  const ant = metricas([addMeses(key, -12)], b.Empresa, c, tipo);
+  const varPond = (mes.pond !== null && ant.pond !== null) ? mes.pond - ant.pond : null;
+  const varSimp = (mes.simp !== null && ant.simp !== null) ? mes.simp - ant.simp : null;
+  return [
+    cardHtml(tipo + " do Mês (" + rotulo(key) + ") · ponderado", fmtDias(mes.pond), "Simples: " + fmtDias(mes.simp)),
+    cardHtml(tipo + " do Ano (Jan até " + rotulo(key) + ") · ponderado", fmtDias(ano.pond), "Simples: " + fmtDias(ano.simp)),
+    cardHtml("Variação " + tipo + " vs. mesmo mês do ano anterior", fmtVar(varPond), "Simples: " + fmtVar(varSimp))
+  ].join("");
+}
+
+function renderBloco(b) {
+  const key = chaveAtual();
+  const c = centrosSel();
+
+  document.getElementById("kpi-" + b.id).innerHTML = `
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:15px; margin:20px 0 12px;">
+      ${cardsTipo(b, key, c, "PMP")}
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:15px; margin:0 0 25px;">
+      ${cardsTipo(b, key, c, "PMR")}
+    </div>`;
+
+  if (typeof Plotly === "undefined") {
+    document.getElementById("grafico-" + b.id).innerHTML =
+      '<p style="color:#B91C1C; font-size:13px;">Gráfico indisponível: a biblioteca Plotly não carregou.</p>';
+    return;
+  }
+
+  const serie = janela(key, 13);
+  const pmpP = serie.map(m => metricas([m], b.Empresa, c, "PMP").pond);
+  const pmpS = serie.map(m => metricas([m], b.Empresa, c, "PMP").simp);
+  const pmrP = serie.map(m => metricas([m], b.Empresa, c, "PMR").pond);
+  const pmrS = serie.map(m => metricas([m], b.Empresa, c, "PMR").simp);
+  const x = serie.map(rotulo);
+
+  // alignmentgroup faz PMP e PMR ficarem lado a lado no mesmo mês.
+  // offsetgroup separa os dois grupos; traces com o mesmo offsetgroup empilham.
+  const trace = (name, y, cor, offset, corTexto, hover) => ({
+    type: "bar",
+    name: name,
+    x: x,
+    y: y,
+    alignmentgroup: "pmp-pmr",
+    offsetgroup: offset,
+    text: y.map(fmtNum),
+    textposition: "inside",
+    textfont: { color: corTexto, size: 10 },
+    marker: { color: cor },
+    hovertemplate: "<b>" + name + "</b><br>%{x}: %{y:.1f} dias<extra></extra>"
+  });
+
+  Plotly.react("grafico-" + b.id, [
+    trace("PMP ponderado", pmpP, CORES.PMP_pond, "pmp", "#FFFFFF"),
+    trace("PMP simples",   pmpS, CORES.PMP_simp, "pmp", "#14532D"),
+    trace("PMR ponderado", pmrP, CORES.PMR_pond, "pmr", "#FFFFFF"),
+    trace("PMR simples",   pmrS, CORES.PMR_simp, "pmr", "#7F1D1D")
+  ], {
+    title: { text: "PMP x PMR · " + b.titulo + " · Últimos 13 meses", font: { size: 14 } },
+    barmode: "relative",
+    yaxis: { title: "Dias" },
+    xaxis: { title: null },
+    legend: { orientation: "h", yanchor: "bottom", y: 1.02, xanchor: "right", x: 1 },
+    template: "plotly_white",
+    font: { family: "Segoe UI, Arial", size: 12, color: "#1E293B" },
+    margin: { t: 60, b: 30 },
+    height: 440,
+    plot_bgcolor: "white"
+  }, { responsive: true, displayModeBar: false });
+}
+
+function renderTudo() { BLOCOS.forEach(renderBloco); }
+[selMes, selAno, selCentro].forEach(el => el.addEventListener("change", renderTudo));
+renderTudo();
+</script>
+"""
+
+html = (
+    template.replace("__NOTAS__", notas_html)
+    .replace("__DADOS__", dados_json)
+    .replace("__CENTROS__", centros_json)
+    .replace("__ANOS__", anos_json)
+    .replace("__MES_PAD__", str(MES_PADRAO))
+    .replace("__ANO_PAD__", str(ANO_PADRAO))
+    .replace("__COR_PMP_POND__", COR_PMP_POND)
+    .replace("__COR_PMP_SIMP__", COR_PMP_SIMP)
+    .replace("__COR_PMR_POND__", COR_PMR_POND)
+    .replace("__COR_PMR_SIMP__", COR_PMR_SIMP)
+)
+display(HTML(html))
+```

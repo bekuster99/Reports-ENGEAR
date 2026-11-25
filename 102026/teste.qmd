@@ -1,0 +1,13 @@
+---
+title: "Teste de título"
+format:
+  html:
+    page-layout: full
+    embed-resources: true
+---
+
+```{python}
+#| echo: false
+from IPython.display import display, HTML
+display(HTML("Conteúdo de teste"))
+```

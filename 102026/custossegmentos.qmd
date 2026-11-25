@@ -1,0 +1,239 @@
+---
+title: "Custos por Segmento"
+subtitle: "Análise Vertical da Receita do Segmento"
+format:
+  html:
+    page-layout: full
+    theme: cosmo
+    toc: false
+    css: styles.css
+    include-in-header: plotly-head.html
+    embed-resources: true
+---
+
+```{python}
+
+
+#| echo: false
+#| warning: false
+#| message: false
+
+import json
+
+import pandas as pd
+from IPython.display import HTML, display
+
+# 1. PARÂMETROS
+ARQUIVO = "drgcc.xlsx"
+ARQUIVO_JSON = "dados_custos_segmento.json"
+MES_CORTE = 10  # acumulado de janeiro até este mês, em cada ano
+CODIGO_RECEITA = "A"  # denominador da análise vertical
+CODIGOS_EXCLUIDOS = ["A", "D4"]  # D4 = intercompany (eliminação intragrupo)
+MESES_NOME = [
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+]
+
+# 2. CARREGAMENTO E TRATAMENTO
+df = pd.read_excel(ARQUIVO)
+linhas_nulas = int(df["Valor"].isna().sum())
+
+df["Competência"] = pd.to_datetime(df["Competência"], errors="coerce")
+df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
+df["Tipo Serviço"] = (
+    df["Tipo Serviço"].fillna("SEM SEGMENTO").astype(str).str.strip()
+)
+df["Classificação Competencia"] = (
+    df["Classificação Competencia"].fillna("").astype(str).str.strip()
+)
+df["Codigo"] = (
+    df["Classificação Competencia"].str.split(" - ").str[0].str.strip()
+)
+
+df = df.dropna(subset=["Competência"])
+df = df[df["Competência"].dt.month <= MES_CORTE]
+
+# 3. AGREGAÇÃO POR ANO, SEGMENTO E CÓDIGO
+agg = (
+    df.assign(Ano=df["Competência"].dt.year)
+    .groupby(["Ano", "Tipo Serviço", "Codigo"], as_index=False)["Valor"]
+    .sum()
+)
+
+# 4. CONFIGURAÇÃO PARA O NAVEGADOR
+segmentos = sorted(df["Tipo Serviço"].unique().tolist())
+
+classes_df = (
+    df[~df["Codigo"].isin(CODIGOS_EXCLUIDOS)][
+        ["Codigo", "Classificação Competencia"]
+    ]
+    .drop_duplicates("Codigo")
+    .sort_values("Codigo")
+)
+classes = [
+    {"codigo": c, "nome": n}
+    for c, n in zip(
+        classes_df["Codigo"], classes_df["Classificação Competencia"]
+    )
+]
+
+linhas = [
+    {"ano": int(a), "seg": s, "cod": c, "valor": round(float(v), 2)}
+    for a, s, c, v in zip(
+        agg["Ano"], agg["Tipo Serviço"], agg["Codigo"], agg["Valor"]
+    )
+]
+
+dados = {
+    "config": {
+        "mes_corte": MES_CORTE,
+        "mes_corte_nome": MESES_NOME[MES_CORTE - 1],
+        "codigo_receita": CODIGO_RECEITA,
+        "segmentos": segmentos,
+        "classes": classes,
+    },
+    "linhas": linhas,
+}
+
+json_str = json.dumps(dados, ensure_ascii=False)
+with open(ARQUIVO_JSON, "w", encoding="utf-8") as f:
+    json.dump(dados, f, ensure_ascii=False)
+
+# 5. PÁGINA
+TEMPLATE = """
+<style>
+.cs-filtros { display: flex; flex-wrap: wrap; gap: 24px; margin: 16px 0; }
+.cs-filtros label { font-weight: 600; }
+.cs-filtros select { margin-left: 8px; padding: 6px 10px; border: 1px solid #CBD5E1; border-radius: 6px; min-width: 240px; }
+.cs-checks { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px; }
+.cs-checks label { font-weight: 400; font-size: 13px; }
+.cs-sub { color: #475569; font-size: 14px; margin-top: 4px; }
+.cs-tab { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 16px; }
+.cs-tab th, .cs-tab td { padding: 8px 10px; border-bottom: 1px solid #E2E8F0; text-align: right; }
+.cs-tab th:first-child, .cs-tab td:first-child { text-align: left; }
+.cs-tab thead th { background: #1B2A4A; color: #fff; }
+.cs-tab tr.cs-receita td { font-weight: 700; background: #F1F5F9; }
+.cs-nota { font-size: 12px; color: #475569; margin-top: 24px; border-top: 1px solid #E2E8F0; padding-top: 12px; }
+</style>
+
+<h2 style="margin-top: 40px; border-bottom: 2px solid #E2E8F0; padding-bottom: 8px;">Custos por Segmento · Análise Vertical</h2>
+<p id="cs-sub" class="cs-sub"></p>
+
+<div class="cs-filtros">
+  <label>Tipo Serviço<select id="cs-seg"></select></label>
+</div>
+<div class="cs-filtros" style="display:block;">
+  <span style="font-weight:600;">Classificações Competência</span>
+  <div id="cs-cls" class="cs-checks"></div>
+</div>
+
+<div id="cs-grafico" style="height: 460px;"></div>
+<div id="cs-tab-wrap"></div>
+
+<div class="cs-nota">
+  <p><strong>Metodologia</strong></p>
+  <ul>
+    <li>Receita: classe A do Tipo Serviço selecionado, usada como denominador da análise vertical.</li>
+    <li>Análise vertical: − soma da classificação ÷ receita do segmento × 100. Custos aparecem positivos. Classificação com saldo de receita aparece negativa.</li>
+    <li>Estornos: mantidos com o sinal original, o que reduz o peso da classificação.</li>
+    <li>Comparação: acumulado de janeiro até o mês de corte em cada ano.</li>
+    <li>Exclusões: classe A (denominador) e D4 Intercompany (eliminação intragrupo, com lançamentos que se compensam).</li>
+    <li>n/d: receita do segmento igual a zero no ano.</li>
+    <li>Linhas com Valor em branco (__NULOS__) ficaram fora das somas.</li>
+  </ul>
+</div>
+
+<script>
+const DADOS = __DADOS__;
+const CFG = DADOS.config;
+const selSeg = document.getElementById('cs-seg');
+const boxCls = document.getElementById('cs-cls');
+
+const fmtR0 = v => 'R$ ' + Math.round(v).toLocaleString('pt-BR');
+const fmtPct = v => v.toLocaleString('pt-BR', {minimumFractionDigits: 1, maximumFractionDigits: 1}) + '%';
+
+function soma(seg, ano, cod) {
+  let total = 0;
+  for (const l of DADOS.linhas) {
+    if (l.seg === seg && l.ano === ano && l.cod === cod) total += l.valor;
+  }
+  return total;
+}
+
+function calcular(seg, codigosSel) {
+  const anos = [...new Set(DADOS.linhas.map(l => l.ano))].sort((a, b) => a - b);
+  const receita = anos.map(a => soma(seg, a, CFG.codigo_receita));
+  const series = codigosSel.map(cod => {
+    const classe = CFG.classes.find(c => c.codigo === cod);
+    return {
+      nome: classe.nome,
+      av: anos.map((a, i) => receita[i] !== 0 ? (-soma(seg, a, cod) / receita[i]) * 100 : null)
+    };
+  });
+  return {anos, receita, series};
+}
+
+function desenhar(res) {
+  const x = res.anos.map(String);
+  const barra = {
+    type: 'bar', name: 'Receita do segmento (R$)', x: x, y: res.receita,
+    marker: {color: '#1B2A4A'}, text: res.receita.map(fmtR0), textposition: 'outside',
+    hovertemplate: '%{x}: R$ %{y:,.2f}<extra></extra>'
+  };
+  const linhas = res.series.map(s => ({
+    type: 'scatter', mode: 'lines+markers', name: s.nome, x: x, y: s.av, yaxis: 'y2',
+    hovertemplate: '%{x}: %{y:.1f}%<extra>' + s.nome + '</extra>'
+  }));
+  const layout = {
+    template: 'plotly_white', height: 460, barmode: 'group',
+    margin: {t: 30, b: 60, l: 70, r: 70},
+    legend: {orientation: 'h', y: -0.18},
+    yaxis: {title: 'Receita do segmento (R$)', rangemode: 'tozero'},
+    yaxis2: {title: 'Análise vertical (%)', overlaying: 'y', side: 'right', ticksuffix: '%'},
+    font: {family: 'Segoe UI, Arial', size: 12, color: '#1E293B'},
+    plot_bgcolor: 'white'
+  };
+  Plotly.react('cs-grafico', [barra, ...linhas], layout, {responsive: true, displaylogo: false});
+}
+
+function tabela(res) {
+  const head = '<tr><th>Linha</th>' + res.anos.map(a => '<th>' + a + '</th>').join('') + '</tr>';
+  const linhaReceita = '<tr class="cs-receita"><td>Receita do segmento (R$)</td>' +
+    res.receita.map(v => '<td>' + fmtR0(v) + '</td>').join('') + '</tr>';
+  const linhasAV = res.series.map(s =>
+    '<tr><td>' + s.nome + '</td>' +
+    s.av.map(v => v === null ? '<td>n/d</td>' : '<td>' + fmtPct(v) + '</td>').join('') +
+    '</tr>'
+  ).join('');
+document.getElementById('cs-tab-wrap').innerHTML =
+  '<table class="cs-tab"><thead>' + head + '</thead><tbody>' + linhaReceita + linhasAV + '</tbody></table>';
+}
+
+function atualizar() {
+  const seg = selSeg.value;
+  const sel = [...boxCls.querySelectorAll('input:checked')].map(e => e.value);
+  const res = calcular(seg, sel);
+  desenhar(res);
+  tabela(res);
+}
+
+selSeg.innerHTML = CFG.segmentos.map(s => '<option value="' + s + '">' + s + '</option>').join('');
+selSeg.value = CFG.segmentos.includes('OBRA') ? 'OBRA' : CFG.segmentos[0];
+boxCls.innerHTML = CFG.classes.map((c, i) =>
+  '<label><input type="checkbox" value="' + c.codigo + '"' + (i < 3 ? ' checked' : '') + '> ' + c.nome + '</label>'
+).join('');
+boxCls.querySelectorAll('input').forEach(e => e.addEventListener('change', atualizar));
+selSeg.addEventListener('change', atualizar);
+document.getElementById('cs-sub').textContent =
+  'Acumulado de janeiro a ' + CFG.mes_corte_nome.toLowerCase() + ' de cada ano';
+atualizar();
+</script>
+"""
+
+html = (
+    TEMPLATE.replace("__DADOS__", json_str)
+    .replace("__NULOS__", str(linhas_nulas))
+)
+display(HTML(html))
+
+```
