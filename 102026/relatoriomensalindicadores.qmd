@@ -25,7 +25,7 @@ from IPython.display import display, HTML
 # 1. PARÂMETROS E CARREGAMENTO
 # -------------------------------------------------------------------------
 ANO_ANALISE = 2026
-MES_ANALISE = 9
+MES_ANALISE = 10
 
 data_corte = pd.Timestamp(year=ANO_ANALISE, month=MES_ANALISE, day=1)
 inicio_13m = data_corte - pd.DateOffset(months=12)
